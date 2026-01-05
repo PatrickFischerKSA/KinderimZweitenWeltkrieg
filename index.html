@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Der Krieg und ich – Lernumgebung</title>
+
+<!-- =========================
+ÄNDERUNGEN (EXPLIZIT MARKIERT)
+1) [NEU] Reset-Button (setzt Quiz vollständig zurück, ohne Reload)
+2) [NEU] Lehrerbereich mit Passwort "Pfäffikon und Nuolen"
+3) [NEU] PDF-Export (alle Fragen + Musterlösungen) via jsPDF
+4) [NEU] KORREKTUR Video-Link-Logik: Bei Fragen ohne eigenes video-Feld wird der zuletzt definierte Film-Link verwendet
+    (sonst wäre immer der erste Film verlinkt gewesen und die 8-Film-Struktur wäre funktional falsch)
+========================= -->
+
+<!-- [NEU] jsPDF für PDF Export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+  body{
+    font-family: Arial, Helvetica, sans-serif;
+    background:#f4f4f4;
+    margin:0;
+    padding:20px;
+    line-height:1.35;
+  }
+  h1,h2,h3{color:#222;margin-top:0.2em;}
+  .card{
+    background:#fff;
+    border:1px solid #ddd;
+    border-radius:10px;
+    padding:16px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom:16px;
+  }
+  .video a{
+    display:inline-block;
+    margin-top:6px;
+    font-size:16px;
+    word-break:break-all;
+  }
+  textarea{
+    width:100%;
+    height:140px;
+    font-size:16px;
+    padding:10px;
+    border-radius:8px;
+    border:1px solid #bbb;
+    box-sizing:border-box;
+    resize:vertical;
+  }
+  button{
+    margin-top:10px;
+    padding:10px 16px;
+    font-size:16px;
+    border-radius:10px;
+    border:1px solid #444;
+    background:#fff;
+    cursor:pointer;
+  }
+  button:hover{background:#f0f0f0;}
+  .feedback{
+    margin-top:12px;
+    font-weight:bold;
+    min-height:28px;
+  }
+  .row{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    align-items:center;
+  }
+  .muted{color:#666;font-weight:normal;}
+  .hidden{display:none;}
+  #teacherPanel{
+    background:#fff;
+    border:2px solid #222;
+    border-radius:12px;
+    padding:16px;
+    margin-top:12px;
+  }
+  .teacherEntry{
+    background:#f7f7f7;
+    border:1px solid #ddd;
+    border-radius:10px;
+    padding:12px;
+    margin:10px 0;
+  }
+  .teacherEntry strong{display:inline-block;margin-bottom:6px;}
+  .pill{
+    display:inline-block;
+    font-size:12px;
+    padding:4px 8px;
+    border:1px solid #aaa;
+    border-radius:999px;
+    background:#fff;
+    margin-left:8px;
+  }
+  .topbar{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+</style>
+</head>
+
+<body>
+
+<div class="card">
+  <div class="topbar">
+    <div>
+      <h1>Der Krieg und ich – Lernumgebung</h1>
+      <div class="muted">32 komplexe Inhaltsfragen · 8 Filme · Sofortkorrektur (1/2/3 Fehlversuche) · Automatisches Weiter</div>
+    </div>
+    <div class="muted" id="progressText"></div>
+  </div>
+</div>
+
+<div class="card video">
+  <h2>Film</h2>
+  <div class="muted">Zum aktuellen Fragenblock passender Film:</div>
+  <a id="videoLink" href="#" target="_blank" rel="noopener">Film öffnen</a>
+</div>
+
+<div class="card" id="questionBox">
+  <h2 id="questionText"></h2>
+  <textarea id="answer" placeholder="Schreibe eine zusammenhängende Antwort (mind. mehrere Sätze)."></textarea>
+
+  <div class="row">
+    <button onclick="checkAnswer()">Antwort abschicken</button>
+    <!-- [NEU] Reset-Button -->
+    <button onclick="resetQuiz()">Reset</button>
+  </div>
+
+  <div id="feedback" class="feedback"></div>
+</div>
+
+<div class="card">
+  <h2>🔐 Lehrerbereich</h2>
+  <div class="muted">Passwortgeschützt. Enthält alle Fragen, Hinweise, Musterlösungen + PDF-Export.</div>
+  <div class="row">
+    <input type="password" id="teacherPassword" placeholder="Passwort eingeben" style="padding:10px;border-radius:10px;border:1px solid #bbb;font-size:16px;min-width:260px;">
+    <button onclick="unlockTeacher()">Öffnen</button>
+    <button onclick="lockTeacher()">Schliessen</button>
+  </div>
+
+  <div id="teacherPanel" class="hidden">
+    <div class="row" style="justify-content:space-between;">
+      <h3 style="margin:0;">Lehrerübersicht</h3>
+      <!-- [NEU] PDF Export Button -->
+      <button onclick="exportPDF()">📄 PDF exportieren (Fragen + Musterlösungen)</button>
+    </div>
+    <div class="muted" style="margin-top:6px;">
+      Passwort korrekt → Inhalte sichtbar. PDF enthält alle 32 Fragen + Musterlösungen.
+    </div>
+    <div id="teacherContent" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<script>
+/* =========================
+   DATEN: 32 FRAGEN (UNVERÄNDERT INHALTLICH)
+   8 Filme × je 4 Fragen
+========================= */
+
+const PASSWORD = "Pfäffikon und Nuolen";
+
+/* Filme (zur Orientierung/Debug) – nicht zwingend, aber hilfreich */
+const FILMS = {
+  ANTON: "https://www.dropbox.com/home/Dokufilme%20Geschichte?preview=Der+Krieg+und+ich+%E2%80%93+Anton+aus+Deutschland+(18).mp4",
+  FRITJOF: "https://www.dropbox.com/scl/fi/dmimfwzhhvsvscir3x6d3/Der-Krieg-und-ich-Fritjof-aus-Norwegen-28.mp4?rlkey=xcjwn09502z2u3j11qd1ab6h2&e=1&dl=0",
+  SANDRINE: "https://www.dropbox.com/scl/fi/7e8ofj25mod85rc24d3tf/Der-Krieg-und-ich-Sandrine-aus-Frankreich-38.mp4?rlkey=zgrdiefcz0d8hj3xn0t1qs5a6&e=1&dl=0",
+  CALUM: "https://www.dropbox.com/scl/fi/wek64imom4vujy4jopgnm/Der-Krieg-und-ich-Calum-Schottland-48.mp4?rlkey=zztasnanytpgfpaectzml6smx&e=1&dl=0",
+  ROMEK: "https://www.dropbox.com/scl/fi/90l1qqtzuwrwdx1c96xqo/Der-Krieg-und-ich-Romek-aus-Polen-58.mp4?rlkey=xpqk6gjy75n6fsoj3gchduqtk&e=1&dl=0",
+  VERA: "https://www.dropbox.com/scl/fi/bz0kep6i10uky2jb76gim/Der-Krieg-und-ich-Vera-aus-der-Sowjetunion-68.mp4?rlkey=q9hr4hksvv3yxuowqd5l6c7jx&e=1&dl=0",
+  JUSTUS: "https://www.dropbox.com/scl/fi/os9q6ojuf5zl1ikf7n494/Der-Krieg-und-ich-Justus-aus-Deutschland-78.mp4?rlkey=jpdg2woou6bkhu39talvgiyh1&e=1&dl=0",
+  EVA: "https://www.dropbox.com/scl/fi/ihui60hshwlrsxtfzgxq4/Der-Krieg-und-ich-Eva-aus-der-Tschechoslowakei-88.mp4?rlkey=aw9hmdgtp9mhilstso4a5853s&e=1&dl=0"
+};
+
+const questions = [
+/* ================= ANTON – DEUTSCHLAND (1–4) ================= */
+{
+  video: FILMS.ANTON,
+  q:"Warum ist die Hitlerjugend für Anton so attraktiv, obwohl sein Vater sie ablehnt?",
+  a:["gemeinschaft","dazugehören","anerkennung","abenteuer","uniform"],
+  hint:"Achte auf Antons Bedürfnis nach Zugehörigkeit und Anerkennung.",
+  solution:"Die Hitlerjugend erscheint Anton attraktiv, weil sie Gemeinschaft, Anerkennung, Abenteuer und das Gefühl vermittelt, dazuzugehören. Er fühlt sich ausgeschlossen und will wie die anderen Jungen Teil der Gruppe sein."
+},
+{
+  video:"",
+  q:"Wie nutzen die Nationalsozialisten Kinderorganisationen gezielt zur Machtsicherung?",
+  a:["indoktrination","gehorsam","früh","propaganda"],
+  hint:"Denke an Erziehung, Kontrolle und frühe Prägung.",
+  solution:"Die Nationalsozialisten nutzen Kinderorganisationen, um Kinder früh zu indoktrinieren, sie zu Gehorsam zu erziehen und ihre Ideologie langfristig zu sichern."
+},
+{
+  video:"",
+  q:"Warum gerät Antons Vater durch die Mitgliedschaft seines Sohnes in Gefahr?",
+  a:["abweichung","verdacht","druck","system"],
+  hint:"Welche Folgen hatte Widerstand oder Nichtanpassung?",
+  solution:"Antons Vater gerät unter Verdacht, weil jede Abweichung vom nationalsozialistischen System als feindlich galt und berufliche wie persönliche Konsequenzen hatte."
+},
+{
+  video:"",
+  q:"Was zeigt Antons Geschichte über den Umgang mit jüdischen Freundschaften?",
+  a:["ausgrenzung","angst","verrat"],
+  hint:"Achte auf Antons Verhalten gegenüber Greta.",
+  solution:"Antons Geschichte zeigt, wie Ausgrenzung, Angst und Anpassungsdruck dazu führen, dass selbst Freundschaften zu jüdischen Kindern zerbrechen."
+},
+
+/* ================= FRITJOF – NORWEGEN (5–8) ================= */
+{
+  video: FILMS.FRITJOF,
+  q:"Warum ist Norwegen strategisch wichtig für Deutschland?",
+  a:["häfen","rohstoffe","kontrolle","nordsee"],
+  hint:"Denke an Lage und Ressourcen.",
+  solution:"Norwegen ist strategisch wichtig wegen seiner Häfen, Rohstoffe wie Erz und der Kontrolle über die Nordsee."
+},
+{
+  video:"",
+  q:"Wie verändern sich die Beziehungen zwischen norwegischen Kindern und deutschen Soldaten?",
+  a:["ambivalent","angst","abhängigkeit"],
+  hint:"Achte auf erste Begegnungen und spätere Erfahrungen.",
+  solution:"Die Beziehungen sind ambivalent: anfängliche Freundlichkeit weicht Angst, Abhängigkeit und Unterdrückung."
+},
+{
+  video:"",
+  q:"Warum leisten viele Norweger zunächst keinen offenen Widerstand?",
+  a:["angst","machtlos","repression"],
+  hint:"Welche Risiken bestehen?",
+  solution:"Viele Norweger leisten keinen Widerstand aus Angst vor Repressionen und weil sie sich militärisch machtlos fühlen."
+},
+{
+  video:"",
+  q:"Welche Formen von Widerstand zeigen Kinder in Norwegen?",
+  a:["sabotage","verweigerung","flucht"],
+  hint:"Achte auf kleine Handlungen.",
+  solution:"Kinder leisten Widerstand durch Sabotage, Verweigerung der Zusammenarbeit und Flucht."
+},
+
+/* ================= SANDRINE – FRANKREICH (9–12) ================= */
+{
+  video: FILMS.SANDRINE,
+  q:"Warum leben jüdische Kinder im Süden Frankreichs unter falschem Namen?",
+  a:["schutz","verfolgung","verstecken"],
+  hint:"Denke an Gesetze und Kontrollen.",
+  solution:"Sie leben unter falschem Namen, um sich vor Verfolgung, Verhaftung und Deportation zu schützen."
+},
+{
+  video:"",
+  q:"Welche Rolle spielt Zivilcourage im Dorf von Le Chambon?",
+  a:["solidarität","gemeinschaft","mut"],
+  hint:"Achte auf kollektives Handeln.",
+  solution:"Zivilcourage zeigt sich in gemeinsamer Solidarität, Mut und dem Schutz von Verfolgten durch das ganze Dorf."
+},
+{
+  video:"",
+  q:"Warum wird Helfen im NS-System kriminalisiert?",
+  a:["gehorsam","abschreckung","kontrolle"],
+  hint:"Welche Wirkung hat Angst?",
+  solution:"Helfen wird kriminalisiert, um Gehorsam zu erzwingen, Angst zu verbreiten und Kontrolle zu sichern."
+},
+{
+  video:"",
+  q:"Was zeigt Sandrines Geschichte über moralische Entscheidungen?",
+  a:["verantwortung","risiko","gewissen"],
+  hint:"Individuelle Entscheidungen.",
+  solution:"Sandrines Geschichte zeigt, dass moralische Entscheidungen Verantwortung und persönliches Risiko verlangen."
+},
+
+/* ================= CALUM – SCHOTTLAND (13–16) ================= */
+{
+  video: FILMS.CALUM,
+  q:"Warum sind Kinder in Großbritannien Teil des Luftschutzes?",
+  a:["notwendigkeit","organisation","krieg"],
+  hint:"Denke an Bombenangriffe.",
+  solution:"Kinder werden einbezogen, weil der Luftkrieg totale Mobilisierung und Organisation erfordert."
+},
+{
+  video:"",
+  q:"Wie verändert der Bombenkrieg den Alltag von Kindern?",
+  a:["angst","verantwortung","verlust"],
+  hint:"Achte auf Schule und Familie.",
+  solution:"Der Bombenkrieg bringt Angst, früh übernommene Verantwortung und massive Verluste."
+},
+{
+  video:"",
+  q:"Warum werden Kinder evakuiert?",
+  a:["schutz","sicherheit","überleben"],
+  hint:"Städte vs. Land.",
+  solution:"Kinder werden evakuiert, um sie vor Bombenangriffen zu schützen und ihr Überleben zu sichern."
+},
+{
+  video:"",
+  q:"Was zeigt Calums Geschichte über kindliche Anpassung?",
+  a:["resilienz","anpassung","durchhalten"],
+  hint:"Achte auf Entwicklung.",
+  solution:"Calums Geschichte zeigt Resilienz, Anpassungsfähigkeit und Durchhaltevermögen."
+},
+
+/* ================= ROMEK – POLEN (17–20) ================= */
+{
+  video: FILMS.ROMEK,
+  q:"Warum sind Schmuggelkinder lebenswichtig im Ghetto?",
+  a:["nahrung","überleben","versorgung"],
+  hint:"Denke an Hunger.",
+  solution:"Schmuggelkinder sichern Nahrung und damit das Überleben ganzer Familien."
+},
+{
+  video:"",
+  q:"Welche Gefahren gehen Kinder beim Schmuggeln ein?",
+  a:["tod","verhaftung","gewalt"],
+  hint:"Achte auf Strafen.",
+  solution:"Kinder riskieren Verhaftung, Misshandlung und Tod."
+},
+{
+  video:"",
+  q:"Warum glauben viele Ghetto-Bewohner lange an Arbeitslager?",
+  a:["täuschung","hoffnung","propaganda"],
+  hint:"Informationsmangel.",
+  solution:"Täuschung, Hoffnung und Propaganda verhindern frühes Erkennen der Vernichtung."
+},
+{
+  video:"",
+  q:"Was bedeutet Freundschaft für Romeks Überleben?",
+  a:["hilfe","vertrauen","rettung"],
+  hint:"Beziehungen.",
+  solution:"Freundschaft ermöglicht Hilfe, Vertrauen und letztlich Rettung."
+},
+
+/* ================= VERA – SOWJETUNION (21–24) ================= */
+{
+  video: FILMS.VERA,
+  q:"Warum werden Kinder in der Sowjetunion evakuiert?",
+  a:["front","sicherheit","organisation"],
+  hint:"Denke an Vormarsch.",
+  solution:"Kinder werden evakuiert, um sie vor der Front zu schützen."
+},
+{
+  video:"",
+  q:"Welche Verluste erleben Kinder durch Evakuierungen?",
+  a:["eltern","heimat","bindung"],
+  hint:"Emotionale Folgen.",
+  solution:"Kinder verlieren Eltern, Heimat und emotionale Sicherheit."
+},
+{
+  video:"",
+  q:"Wie verändern Kinderheime das Aufwachsen?",
+  a:["disziplin","fremdbestimmung","anpassung"],
+  hint:"Alltag im Heim.",
+  solution:"Kinderheime erzwingen Anpassung, Disziplin und Fremdbestimmung."
+},
+{
+  video:"",
+  q:"Was zeigt Veras Geschichte über Krieg und Kindheit?",
+  a:["entwurzelung","trauma","überleben"],
+  hint:"Langfristige Folgen.",
+  solution:"Krieg zerstört Kindheit, entwurzelt und traumatisiert."
+},
+
+/* ================= JUSTUS – DEUTSCHLAND (25–28) ================= */
+{
+  video: FILMS.JUSTUS,
+  q:"Warum wird militärischer Gehorsam früh eingeübt?",
+  a:["vorbereitung","krieg","disziplin"],
+  hint:"Ziel des Regimes.",
+  solution:"Früher Gehorsam dient der Vorbereitung auf den Krieg."
+},
+{
+  video:"",
+  q:"Welche Rolle spielt Angst in der NS-Erziehung?",
+  a:["kontrolle","unterwerfung","druck"],
+  hint:"Erziehungsmittel.",
+  solution:"Angst dient Kontrolle und Unterwerfung."
+},
+{
+  video:"",
+  q:"Warum fällt Widerstand schwer?",
+  a:["überwachung","strafe","isolierung"],
+  hint:"Systemdenken.",
+  solution:"Überwachung und harte Strafen verhindern Widerstand."
+},
+{
+  video:"",
+  q:"Was zeigt Justus’ Geschichte über Verantwortung?",
+  a:["mitläufertum","schuld","reflexion"],
+  hint:"Individuelle Entscheidung.",
+  solution:"Sie zeigt die Problematik von Mitläufertum und Schuld."
+},
+
+/* ================= EVA – TSCHECHOSLOWAKEI (29–32) ================= */
+{
+  video: FILMS.EVA,
+  q:"Warum ist Flucht für Kinder besonders gefährlich?",
+  a:["entdeckung","gewalt","verlust"],
+  hint:"Risiken.",
+  solution:"Kinder sind schutzlos gegenüber Gewalt und Entdeckung."
+},
+{
+  video:"",
+  q:"Welche Rolle spielen Helfer bei der Flucht?",
+  a:["netzwerke","mut","solidarität"],
+  hint:"Organisation.",
+  solution:"Helfer ermöglichen Flucht durch Netzwerke und Mut."
+},
+{
+  video:"",
+  q:"Warum ist Identität im Krieg instabil?",
+  a:["namen","papiere","verstecken"],
+  hint:"Falsche Identitäten.",
+  solution:"Identität wird durch falsche Namen und Dokumente instabil."
+},
+{
+  video:"",
+  q:"Was zeigt Evas Geschichte über Hoffnung?",
+  a:["überleben","zukunft","menschlichkeit"],
+  hint:"Trotz Krieg.",
+  solution:"Hoffnung bleibt Grundlage für Überleben und Menschlichkeit."
+}
+];
+
+/* =========================
+   LOGIK
+========================= */
+
+let current = 0;
+let tries = 0;
+let lockDuringAutoAdvance = false;
+
+/* [NEU] KORREKTUR Video-Link-Logik:
+   - wenn questions[current].video leer ist, nimm den zuletzt davor gesetzten Film-Link
+*/
+function getVideoForIndex(idx){
+  // Suche rückwärts bis zum nächsten Eintrag mit video-Link
+  for(let i = idx; i >= 0; i--){
+    if(questions[i].video && questions[i].video.trim() !== ""){
+      return questions[i].video;
+    }
+  }
+  // Fallback (sollte praktisch nie passieren)
+  return FILMS.ANTON;
+}
+
+function updateProgress(){
+  const el = document.getElementById("progressText");
+  el.innerHTML = `<span class="pill">Frage ${Math.min(current+1, questions.length)} / ${questions.length}</span>`;
+}
+
+function loadQuestion(){
+  lockDuringAutoAdvance = false;
+  const q = questions[current];
+  document.getElementById("questionText").innerText = q.q;
+  document.getElementById("answer").value = "";
+  document.getElementById("feedback").innerText = "";
+  document.getElementById("videoLink").href = getVideoForIndex(current);
+  tries = 0;
+  updateProgress();
+}
+
+function normalize(s){
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Umlaute/Diakritika robust
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+function checkAnswer(){
+  if(lockDuringAutoAdvance) return;
+
+  const q = questions[current];
+  const user = normalize(document.getElementById("answer").value);
+
+  // sehr bewusst simpel (wie in deiner ursprünglichen Datei): Keyword-Check
+  const correct = q.a.some(w => user.includes(normalize(w)));
+
+  if(correct){
+    current++;
+    if(current < questions.length){
+      loadQuestion();
+    } else {
+      document.getElementById("feedback").innerText = "✅ Alle Fragen abgeschlossen.";
+      updateProgress();
+      alert("Alle Fragen abgeschlossen.");
+    }
+    return;
+  }
+
+  tries++;
+  if(tries === 1){
+    document.getElementById("feedback").innerText = "Versuch es nochmals.";
+  } else if(tries === 2){
+    document.getElementById("feedback").innerText = "Hinweis: " + q.hint;
+  } else {
+    document.getElementById("feedback").innerText = "Musterlösung: " + q.solution;
+    lockDuringAutoAdvance = true;
+    setTimeout(() => {
+      current++;
+      if(current < questions.length){
+        loadQuestion();
+      } else {
+        document.getElementById("feedback").innerText = "✅ Alle Fragen abgeschlossen.";
+        updateProgress();
+        alert("Alle Fragen abgeschlossen.");
+      }
+    }, 3000);
+  }
+}
+
+/* [NEU] Reset-Button */
+function resetQuiz(){
+  current = 0;
+  tries = 0;
+  lockDuringAutoAdvance = false;
+  loadQuestion();
+}
+
+/* =========================
+   [NEU] LEHRERBEREICH
+========================= */
+function unlockTeacher(){
+  const pw = document.getElementById("teacherPassword").value;
+  if(pw === PASSWORD){
+    document.getElementById("teacherPanel").classList.remove("hidden");
+    renderTeacherContent();
+  } else {
+    alert("Falsches Passwort.");
+  }
+}
+
+function lockTeacher(){
+  document.getElementById("teacherPanel").classList.add("hidden");
+}
+
+/* Lehreransicht: zeigt pro Frage Film-Link, Hinweis, Musterlösung */
+function renderTeacherContent(){
+  const container = document.getElementById("teacherContent");
+  let html = "";
+  questions.forEach((q, i) => {
+    const filmLink = getVideoForIndex(i);
+    html += `
+      <div class="teacherEntry">
+        <strong>Frage ${i+1}:</strong><br>
+        ${q.q}<br><br>
+        <div><em>Film:</em> <a href="${filmLink}" target="_blank" rel="noopener">${filmLink}</a></div>
+        <div style="margin-top:6px;"><em>Hinweis:</em> ${q.hint}</div>
+        <div style="margin-top:6px;"><em>Musterlösung:</em> ${q.solution}</div>
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+}
+
+/* =========================
+   [NEU] PDF EXPORT
+========================= */
+function exportPDF(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:"mm", format:"a4"});
+
+  const marginLeft = 10;
+  const marginTop = 12;
+  const pageHeight = 297;
+  const usableWidth = 190;
+
+  let y = marginTop;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("Der Krieg und ich – Fragen & Musterlösungen (32)", marginLeft, y);
+  y += 8;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text("Export aus der Lernumgebung (Lehrerbereich).", marginLeft, y);
+  y += 8;
+
+  questions.forEach((q, i) => {
+    const filmLink = getVideoForIndex(i);
+
+    // Abschnittstitel
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    const title = `Frage ${i+1}`;
+    if(y > pageHeight - 15){ doc.addPage(); y = marginTop; }
+    doc.text(title, marginLeft, y);
+    y += 6;
+
+    // Film
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const filmLine = `Film: ${filmLink}`;
+    let filmLines = doc.splitTextToSize(filmLine, usableWidth);
+    if(y + filmLines.length*4 > pageHeight - 10){ doc.addPage(); y = marginTop; }
+    doc.text(filmLines, marginLeft, y);
+    y += filmLines.length * 4 + 2;
+
+    // Frage
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    let qLines = doc.splitTextToSize(q.q, usableWidth);
+    if(y + qLines.length*5 > pageHeight - 10){ doc.addPage(); y = marginTop; }
+    doc.text(qLines, marginLeft, y);
+    y += qLines.length * 5 + 2;
+
+    // Musterlösung
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    const solLabel = "Musterlösung: ";
+    const solText = solLabel + q.solution;
+    let solLines = doc.splitTextToSize(solText, usableWidth);
+    if(y + solLines.length*5 > pageHeight - 10){ doc.addPage(); y = marginTop; }
+    doc.text(solLines, marginLeft, y);
+    y += solLines.length * 5 + 6;
+  });
+
+  doc.save("Der_Krieg_und_ich_Fragen_Musterloesungen.pdf");
+}
+
+/* Start */
+loadQuestion();
+</script>
+
+</body>
+</html>
